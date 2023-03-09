@@ -5,6 +5,7 @@ import geopandas as gpd
 from tqdm import tqdm
 from pyrosm import OSM
 from shapely import Polygon, LineString
+from scipy.spatial import distance as sp_dist
 
 
 def poly_to_shapely(filepath):
@@ -95,6 +96,56 @@ def gdf_to_linestring(gdf):
     return LineString(points)
 
 
+def trim_linestring(linestring, MIN_STEP=1e-4, MAX_STEP=0.01):
+    '''
+    Trims linestring by greedily searching for a path with step sizes
+    within MIN_STEP and MAX_STEP.
+    '''
+    x, y = linestring.coords.xy
+
+    # Return the same object if it is small
+    if len(x) <= 5:
+        return linestring
+
+    # ... build distance matrix, and fill the diagonal with infs
+    dist = sp_dist.squareform(sp_dist.pdist(np.array([x, y]).T))
+    dist[dist <= 0] = np.inf
+
+    # ... idc will contain the greedy route
+    idc = [0, ]
+
+    for _ in range(len(x)-1):
+        # Delete nodes closer than MIN_STEP
+        _to_delete = np.argwhere(dist[idc[-1]] < MIN_STEP)[:, 0]
+        for ii in _to_delete:
+            dist[:, ii] = np.inf
+            dist[ii] = np.inf
+
+        # Find next node as the closest
+        _next = np.argmin(dist[idc[-1]])
+
+        # Exit if next node is already in the list...
+        if _next in idc:
+            break
+
+        # ... or if it is over MAX_STEP away
+        if dist[idc[-1], _next] > MAX_STEP:
+            break
+
+        idc.append(_next)
+        dist[:, idc[-2]] = np.inf
+        dist[idc[-2]] = np.inf
+
+    newx, newy = np.array(x)[idc], np.array(y)[idc]
+
+    try:
+        new_linestring = LineString(zip(newx, newy))
+    except:
+        new_linestring = linestring
+
+    return new_linestring
+
+
 # For every spanish region...
 # Visit to download data https://download.geofabrik.de/europe/spain.html
 FILE_OSM = "./madrid-latest.osm.pbf"
@@ -104,7 +155,6 @@ DIR_OUTPUT = "./callejeros"
 # For every spanish municipality...
 # Download municipalities from https://github.com/JamesChevalier/cities
 for _municipio_file in tqdm(os.listdir(DIR_MUNICIPIOS)[:]):
-    # _municipio_file = "majadahonda_comunidad-de-madrid.poly"
     _municipio = _municipio_file.split('_', maxsplit=1)[0]
 
     # Load OSM data
@@ -123,6 +173,7 @@ for _municipio_file in tqdm(os.listdir(DIR_MUNICIPIOS)[:]):
     # Extract LineStrings()
     for street in STREETS:
         geometry = gdf_to_linestring(_edges[_edges["name"] == street])
+        geometry = trim_linestring(geometry)
         GEOMETRIES.append(geometry)
 
     # Prepare output data
