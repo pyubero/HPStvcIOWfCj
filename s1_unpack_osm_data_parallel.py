@@ -1,11 +1,12 @@
 import os
-import numpy as np
 import pandas as pd
 import geopandas as gpd
 from tqdm import tqdm
 from pyrosm import OSM
 from shapely import Polygon, LineString
 from scipy.spatial import distance as sp_dist
+from multiprocessing import Pool
+import numpy as np
 
 
 def poly_to_shapely(filepath):
@@ -34,12 +35,10 @@ def validate_network(nodes, edges):
     '''
     # Check whether the municipio has been mapped
     if (nodes is None) or (edges is None):
-        print(f"<E> Unmapped city {_municipio}")
         return False
 
     # Check whether the municipio has valid street names
     if "name" not in edges.columns:
-        print(f"<E> No street names found for {_municipio}")
         return False
 
     return True
@@ -96,10 +95,10 @@ def gdf_to_linestring(gdf):
     return LineString(points)
 
 
-def trim_linestring(linestring, minStep=1e-4, maxStep=0.01):
+def trim_linestring(linestring, MIN_STEP=1e-4, MAX_STEP=0.01):
     '''
     Trims linestring by greedily searching for a path with step sizes
-    within minStep and maxStep.
+    within MIN_STEP and MAX_STEP.
     '''
     x, y = linestring.coords.xy
 
@@ -115,8 +114,8 @@ def trim_linestring(linestring, minStep=1e-4, maxStep=0.01):
     idc = [0, ]
 
     for _ in range(len(x)-1):
-        # Delete nodes closer than minStep
-        _to_delete = np.argwhere(dist[idc[-1]] < minStep)[:, 0]
+        # Delete nodes closer than MIN_STEP
+        _to_delete = np.argwhere(dist[idc[-1]] < MIN_STEP)[:, 0]
         for ii in _to_delete:
             dist[:, ii] = np.inf
             dist[ii] = np.inf
@@ -128,8 +127,8 @@ def trim_linestring(linestring, minStep=1e-4, maxStep=0.01):
         if _next in idc:
             break
 
-        # ... or if it is over maxStep away
-        if dist[idc[-1], _next] > maxStep:
+        # ... or if it is over MAX_STEP away
+        if dist[idc[-1], _next] > MAX_STEP:
             break
 
         idc.append(_next)
@@ -151,11 +150,15 @@ DIR_OUTPUT = "./callejeros"
 
 # For every spanish region...
 # Visit to download data https://download.geofabrik.de/europe/spain.html
-DIR_MUNICIPIOS = "./spain/comunidad-de-madrid/"
+COMUNIDAD = "comunidad-de-madrid"
+
+DIR_MUNICIPIOS = f"./spain/{COMUNIDAD}/"
+municipios_list = os.listdir(DIR_MUNICIPIOS)[:]
 
 # For every spanish municipality...
 # Download municipalities from https://github.com/JamesChevalier/cities
-for _municipio_file in tqdm(os.listdir(DIR_MUNICIPIOS)[:]):
+def parallel_fun(jj):
+    _municipio_file = municipios_list[jj]
     _municipio = _municipio_file.split('_', maxsplit=1)[0]
 
     # Load OSM data
@@ -165,7 +168,8 @@ for _municipio_file in tqdm(os.listdir(DIR_MUNICIPIOS)[:]):
     # Obtain graph ~2mins
     _nodes,  _edges = osm.get_network(nodes=True, network_type="walking")
     if not validate_network(_nodes, _edges):
-        continue
+        print(f"<E> Unmapped city {_municipio}")
+        return
 
     # Prepare output data
     STREETS = get_unique_streets(_edges)
@@ -187,4 +191,15 @@ for _municipio_file in tqdm(os.listdir(DIR_MUNICIPIOS)[:]):
         f"{DIR_OUTPUT}/{com}",
         '_'.join([com, mun])+".geojson"
         )
-    df.to_file(fpath, driver="GeoJSON")
+    # df.to_file(fpath, driver="GeoJSON")
+
+
+if __name__ == "__main__":
+    # With 1 process it takes about 60-70 min
+    # With 5 processes it takes about 15-20 min <-
+    # With 6 processes it takes about 18-23 min
+    
+    with Pool(processes=5) as p:
+        results = p.imap_unordered(parallel_fun, range(len(municipios_list)))
+        for res in tqdm(results, total=len(municipios_list)):
+            pass

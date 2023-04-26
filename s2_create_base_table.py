@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import geopandas as gpd
 from tqdm import tqdm
+from unidecode import unidecode
 
 
 def add_row(dataframe, new_row):
@@ -27,7 +28,6 @@ def normalize_string(string):
     '''
     Normalizes a string by lowering all letters, and removing any accent.
     '''
-    from unidecode import unidecode
     words = [w for w in string.split(' ')]
     words = [w.lower() for w in words]
     words = [unidecode(w) for w in words]
@@ -84,4 +84,4 @@ for file in tqdm(os.listdir(_filepath)):
     DF = add_row(DF, zipped_data)
 
 _output = os.path.join(DIR_OUTPUT, f"{_comunidad}_streets.xlsx")
-DF.to_excel(_output, index=False)
+# DF.to_excel(_output, index=False)
